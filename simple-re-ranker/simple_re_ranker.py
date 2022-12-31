@@ -5,51 +5,67 @@ from gensim import corpora, models, similarities
 from gensim.parsing.preprocessing import preprocess_string
 from sentence_transformers import SentenceTransformer
 
-corpus = []
-corpus_raw = []
-print("Preprocessing")
-with open("../dataset/subset/corpus_subset.json", "r") as f:
-    lines = json.load(f)
-    for item in lines:
-        corpus.append(preprocess_string(item["text"]))
-        corpus_raw.append(item["text"])
+import extract_sub_dataset as dataset
 
-queries = []
-queries_raw = []
-with open("../dataset/subset/queries_subset.json", "r") as f:
-    lines = json.load(f)
-    for item in lines:
-        queries.append(preprocess_string(item["text"]))
-        queries_raw.append(item["text"])
+rerank_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-print("Creating BOW")
-dictionary = corpora.Dictionary(corpus)
-bow_corpus = [dictionary.doc2bow(text) for text in corpus]
-print("Creating LSI Model")
-lsi = models.LsiModel(bow_corpus, id2word=dictionary, num_topics=400)
-index = similarities.MatrixSimilarity(lsi[bow_corpus])
+def prepare_data():
+    corpus_subset = dataset.get_corpus_json()
+    subset_train_rel = dataset.get_train_json()
+    queries_subset = dataset.get_queries_json(subset_train_rel)
+    return corpus_subset, queries_subset, subset_train_rel
 
-print("Running test query")
-vec_bow = dictionary.doc2bow(queries[0])
-vec_lsi = lsi[vec_bow]  # convert the query to LSI space
-sims = index[vec_lsi]  # perform a similarity query against the corpus
-sims = sorted(enumerate(sims), key=lambda item: -item[1])
-print("Query: ", queries_raw[0])
-for doc_position, doc_score in sims[:10]:
-    print(f"[{doc_position}]", doc_score, corpus_raw[doc_position])
-for i, doc in enumerate(sims):
-    if doc[0] == 0:
-        print(i)
-        break
-print(len(sims))
+def create_model(corpus):
+    print("Creating BOW")
+    pre_processed = [preprocess_string(item["text"]) for item in corpus]
+    dictionary = corpora.Dictionary(pre_processed)
+    bow_corpus = [dictionary.doc2bow(text) for text in pre_processed]
+    print("Creating LSI Model")
+    lsi = models.LsiModel(bow_corpus, id2word=dictionary, num_topics=400)
+    index = similarities.MatrixSimilarity(lsi[bow_corpus])
+    return dictionary, lsi, index
 
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-query_embedding = np.array(model.encode(queries_raw[0]))
-reranked = []
-for doc_position, doc_score in sims[:100]:
-    doc_embedding = np.array(model.encode(corpus_raw[doc_position]))
-    cos_sim = (doc_embedding.T @ query_embedding) / (np.linalg.norm(doc_embedding) * np.linalg.norm(query_embedding))
-    reranked.append((cos_sim, doc_position))
-reranked = sorted(reranked, key=lambda item: -item[0])
-for item in reranked[:10]:
-    print(f"[{item[1]}]", item[0], corpus_raw[item[1]])
+def run_first_stage_retrieval(query, dictionary, lsi, index):
+    vec_bow = dictionary.doc2bow(preprocess_string(query["text"]))
+    vec_lsi = lsi[vec_bow]  # convert the query to LSI space
+    sims = index[vec_lsi]  # perform a similarity query against the corpus
+    sims = sorted(enumerate(sims), key=lambda item: -item[1])
+    return sims[:1000]
+
+def perform_re_rank(query, sims, corpus):
+    query_embedding = np.array(rerank_model.encode(query["text"]))
+    reranked = []
+    for doc_position, doc_score in sims:
+        doc_embedding = np.array(rerank_model.encode(corpus[doc_position]["text"]))
+        cos_sim = (doc_embedding.T @ query_embedding) / (np.linalg.norm(doc_embedding) * np.linalg.norm(query_embedding))
+        reranked.append((doc_position, cos_sim))
+    reranked = sorted(reranked, key=lambda item: -item[1])
+    return reranked
+
+def reciprocal_rank(sims, rel, query):
+    rel_item = [item for item in rel if item["query_id"] == int(query["_id"])][0]
+    for i, doc in enumerate(sims):
+        if doc[0] == rel_item["corpus_id"]:
+            return 1 / (i + 1)
+    return 0
+
+
+def main():
+    corpus, queries, train_rel = prepare_data()
+    dictionary, lsi, index = create_model(corpus)
+    rr_basic, rr_reranked = [], []
+    for query in queries:
+        sims = run_first_stage_retrieval(query, dictionary, lsi, index)
+        rr1 = reciprocal_rank(sims, train_rel, query)
+        rerank = perform_re_rank(query, sims, corpus)
+        rr2 = reciprocal_rank(rerank, train_rel, query)
+        print(f"[Query {query['_id']}] RR Basic: {rr1}, RR Reranked: {rr2}")
+        rr_basic.append(rr1)
+        rr_reranked.append(rr2)
+    print("-" * 50)
+    print(f"MRR Basic: {sum(rr_basic) / len(queries)}")
+    print(f"MRR Reranked: {sum(rr_reranked) / len(queries)}")
+
+
+if __name__ == '__main__':
+    main()
