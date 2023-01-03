@@ -7,8 +7,6 @@ import extract_sub_dataset as dataset
 from util import get_stop_ids, progressBar
 
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
-DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 model = BertLMHeadModel.from_pretrained("ielab/TILDE")
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 
