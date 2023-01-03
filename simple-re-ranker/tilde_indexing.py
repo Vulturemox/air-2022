@@ -12,6 +12,11 @@ DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 model = BertLMHeadModel.from_pretrained("ielab/TILDE")
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 
+# SOURCE: https://github.com/ielab/TILDE/blob/main/indexing.py
+# Repo for the Paper "TILDE: Term Independent Likelihood moDEl for Passage Re-ranking"
+# Authors: Shengyao Zhuang and Guido Zuccon
+#
+# Code was adapted to fit our needs
 def get_embedding(sample_text, stop_ids):
     passage_token_ids = tokenizer(sample_text, add_special_tokens=False)["input_ids"]
     cleaned_ids = np.array([id for id in passage_token_ids if id not in stop_ids]).astype(np.int16)
@@ -40,7 +45,4 @@ def tilde_pre_compute():
 
 
 if __name__ == '__main__':
-    # with open('passage_embeddings.pkl', 'rb') as handle:
-    #     doc_embeddings = pickle.load(handle)
-    # print(doc_embeddings)
     tilde_pre_compute()

@@ -1,6 +1,7 @@
 import os.path
 import pickle
 
+import numpy as np
 import torch
 from transformers import BertLMHeadModel, BertTokenizerFast
 from util import *
@@ -10,7 +11,13 @@ model = BertLMHeadModel.from_pretrained("ielab/TILDE")
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 
 
+# SOURCE: https://github.com/ielab/TILDE/blob/main/inference.py
+# Repo for the Paper "TILDE: Term Independent Likelihood moDEl for Passage Re-ranking"
+# Authors: Shengyao Zhuang and Guido Zuccon
+#
+# Code was adapted to fit our needs
 def perform_re_rank(query, sims, embeddings, stop_ids):
+    alpha = 0.5
     query_token_ids = tokenizer(query, add_special_tokens=False)["input_ids"]
     cleaned_query_token_ids = [id for id in query_token_ids if id not in stop_ids]  # only keep valid token ids
 
@@ -27,7 +34,19 @@ def perform_re_rank(query, sims, embeddings, stop_ids):
 
     QL_scores = []
     DL_scores = []
-
+    for rank, sim_entry in enumerate(sims):
+        doc_id = sim_entry[0]
+        passage_log_probs, passage_token_id = embeddings[doc_id]
+        target_log_probs = passage_log_probs[cleaned_query_token_ids]
+        score = np.sum(target_log_probs)
+        QL_scores.append(score)
+        query_target_log_probs = query_log_probs[passage_token_id]
+        passage_score = np.sum(query_target_log_probs) / len(passage_token_id)  # mean likelihood
+        DL_scores.append(passage_score)
+    scores = (alpha * np.array(QL_scores)) + ((1 - alpha) * np.array(DL_scores))
+    zipped_lists = zip([item[0] for item in sims], scores)
+    sorted_pairs = sorted(zipped_lists, reverse=True, key=lambda s: s[1])
+    return sorted_pairs
 
 def main():
     if not os.path.exists("tilde_embeddings.pkl"):
@@ -42,7 +61,7 @@ def main():
     for query in queries:
         sims = run_first_stage_retrieval(query, dictionary, lsi, index)
         rr1 = reciprocal_rank(sims, train_rel, query)
-        rerank = perform_re_rank(query, sims, doc_embeddings, stop_ids)
+        rerank = perform_re_rank(query["text"], sims, doc_embeddings, stop_ids)
         rr2 = reciprocal_rank(rerank, train_rel, query)
         print(f"[Query {query['_id']}] RR Basic: {rr1}, RR Reranked: {rr2}")
         rr_basic.append(rr1)
