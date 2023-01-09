@@ -1,5 +1,4 @@
 import torch
-import argparse
 from tqdm import tqdm
 from util import *
 from transformers import T5Config, T5Tokenizer, T5ForConditionalGeneration
@@ -7,10 +6,11 @@ from initial_rank import *
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-COLLECITON_PATH = "../data/collection"
-QUERY_PATH = "../data/query"
-RUN_PATH = "../data/DL2019_bm25_default.res"
-OUTPUT_PATH = "output/out.res"
+# SOURCE: https://github.com/ielab/DeepQLM-ECIR2021
+# Repo for the Paper "Deep Query Likelihood Model for Information Retrieval"
+# Authors: Shengyao Zhuang, Hang Li , Guido Zuccon
+#
+# Code was adapted to fit our needs
 
 def transform_data(text_key, id_key, collection):
     transformed = {}
@@ -66,41 +66,28 @@ def perform_rerank(query, tokenizer, model, corpus, sims):
             total_scores.append(scores)
 
     total_scores = torch.cat(total_scores).cpu().numpy()
-    # rerank documents
     zipped_lists = zip(total_scores, docids)
     sorted_pairs = sorted(zipped_lists, reverse=True)
-
-    # write run file
     res = []
     for i in range(num_docs):
         score, docid = sorted_pairs[i]
         res.append((docid, score))
 
     return res
-    #with open(OUTPUT_PATH, "a+") as f:
-    #    f.writelines(lines)
+
 
 def process_queries(queries, train_rel, corpus):
     dictionary, lsi, index = create_model(corpus)
 
-    tokenizer = T5Tokenizer.from_pretrained('t5-base', cache_dir=".cache")
-    config = T5Config.from_pretrained('t5-base', cache_dir=".cache")
+    tokenizer = T5Tokenizer.from_pretrained('t5-base', cache_dir="simple-re-ranker/.cache")
+    config = T5Config.from_pretrained('t5-base', cache_dir="simple-re-ranker/.cache")
     model = T5ForConditionalGeneration.from_pretrained('t5-base-tf/model.ckpt-1004000', from_tf=True, config=config)
     model.to(DEVICE)
     rr_basic, rr_reranked = [], []
     for query in tqdm(queries, desc="Ranking queries...."):
-        print('start')
         sims = run_first_stage_retrieval(query, dictionary, lsi, index)
-        print('have sims')
-        #print(sims)
-        #print(query)
-        #print(train_rel)
         rr1 = reciprocal_rank(sims, train_rel, query)
-
-        print('start rerank')
         rerank = perform_rerank(query["text"], tokenizer, model, corpus, sims)
-
-        print('end rerank')
         rr2 = reciprocal_rank(rerank, train_rel, query)
         print(f"[Query {query['_id']}] RR Basic: {rr1}, RR Reranked: {rr2}")
         rr_basic.append(rr1)
@@ -110,24 +97,9 @@ def process_queries(queries, train_rel, corpus):
     print(f"MRR Reranked: {sum(rr_reranked) / len(queries)}")
 
 
-
-
 def main():
-    #run_type = 'msmarco'
-
     corpus, queries, train_rel = prepare_data()
-
-    #train_rel = transform_run(train_rel)
-
     process_queries(queries, train_rel, corpus)
-    return
-
-    for qid in tqdm(train_rel.keys(), desc="Ranking queries...."):
-        query = queries[qid]
-        #print('processed: ' + str(count))
-
-        # split batch of documents in top 1000
-
 
 
 if __name__ == '__main__':
