@@ -2,7 +2,7 @@ import json
 import os.path
 
 CORPUS_SUBSET_SIZE = 10_000
-DATASET_PATH = "../dataset"
+DATASET_PATH = "./dataset"
 
 def get_corpus_json():
     subset = []
