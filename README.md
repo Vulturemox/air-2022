@@ -2,8 +2,6 @@
 ### Group Members
 * Matthias Hülser
 * Julian Rakuschek
-* ~Marco Riegler~
-* ~Matthias Thym~
 
 This repository contains the source code for the project in the course "Advanced Information Retrieval WS 2022".
 The main topic was the implementation of two re-rankers and their comparison.
